@@ -1,0 +1,57 @@
+rules_version = '2';
+
+// Security rules for One to Ten.
+// Paste the whole file into Firebase console > Firestore Database > Rules, then click Publish.
+//
+// What they allow:
+//   - Anyone (no sign-in) can add ONE pick at a time: a new document in "picks" plus +1 on the totals.
+//   - Anyone can read the running totals (tally/counts).
+//   - Nobody can edit, delete, or bulk-read the picks from the web. You can still see every pick
+//     in the Firebase console under Firestore Database > Data > picks.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function tallyKeys() {
+      return ['total', 'n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10'];
+    }
+    function changed() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+    // If key k is part of this write, it must have gone up by exactly 1 (a missing key counts as 0).
+    function bumpedByOne(k) {
+      return !changed().hasAny([k])
+          || request.resource.data[k] == resource.data.get(k, 0) + 1;
+    }
+
+    // The permanent log: one document per pick, with the number and a server timestamp.
+    match /picks/{pickId} {
+      allow read, update, delete: if false;
+      allow create: if request.resource.data.keys().hasOnly(['n', 'at'])
+                    && request.resource.data.n is int
+                    && request.resource.data.n >= 1
+                    && request.resource.data.n <= 10
+                    && request.resource.data.at == request.time;
+    }
+
+    // The running totals the page displays: total, and n1..n10.
+    // A write may only add a single pick: total +1 and exactly one of n1..n10 +1.
+    match /tally/counts {
+      allow read: if true;
+      allow delete: if false;
+      // First pick ever creates the document with {total: 1, nX: 1}.
+      allow create: if request.resource.data.keys().hasOnly(tallyKeys())
+                    && request.resource.data.size() == 2
+                    && request.resource.data.total == 1
+                    && request.resource.data.values().hasOnly([1]);
+      allow update: if request.resource.data.keys().hasOnly(tallyKeys())
+                    && changed().size() == 2
+                    && changed().hasAll(['total'])
+                    && bumpedByOne('total')
+                    && bumpedByOne('n1') && bumpedByOne('n2') && bumpedByOne('n3')
+                    && bumpedByOne('n4') && bumpedByOne('n5') && bumpedByOne('n6')
+                    && bumpedByOne('n7') && bumpedByOne('n8') && bumpedByOne('n9')
+                    && bumpedByOne('n10');
+    }
+  }
+}
